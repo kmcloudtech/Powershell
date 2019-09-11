@@ -1,0 +1,63 @@
+# Get the ID and security principal of the current user account
+$myWindowsID=[System.Security.Principal.WindowsIdentity]::GetCurrent()
+$myWindowsPrincipal=new-object System.Security.Principal.WindowsPrincipal($myWindowsID)
+ 
+# Get the security principal for the Administrator role
+$adminRole=[System.Security.Principal.WindowsBuiltInRole]::Administrator
+ 
+# Check to see if we are currently running "as Administrator"
+if ($myWindowsPrincipal.IsInRole($adminRole))
+   {
+   # We are running "as Administrator" - so change the title and background color to indicate this
+   $Host.UI.RawUI.WindowTitle = $myInvocation.MyCommand.Definition + "(Elevated)"
+   $Host.UI.RawUI.BackgroundColor = "DarkBlue"
+   clear-host
+   }
+else
+   {
+   # We are not running "as Administrator" - so relaunch as administrator
+   
+   # Create a new process object that starts PowerShell
+   $newProcess = new-object System.Diagnostics.ProcessStartInfo "PowerShell";
+   
+   # Specify the current script path and name as a parameter
+   $newProcess.Arguments = $myInvocation.MyCommand.Definition;
+   
+   # Indicate that the process should be elevated
+   $newProcess.Verb = "runas";
+   
+   # Start the new process
+   [System.Diagnostics.Process]::Start($newProcess);
+   
+   # Exit from the current, unelevated, process
+   exit
+   }
+
+$nhl = invoke-restmethod -uri https://rss.cbc.ca/lineup/sports-nhl.xml
+# Get all news from CBC NHL RSS Feed
+
+Add-Type -AssemblyName System.speech
+$speak = New-Object System.Speech.Synthesis.SpeechSynthesizer
+# Give a voice to Powershell
+
+$story = $nhl.description."#cdata-section"
+# Parse RSS and get all news stories
+
+$print = $story[0].IndexOf("p>")
+# Have a marker for the start of only the headline
+
+$headlines = $story[0].substring($print+2).replace("</p>", " ")
+# Substring to start at the headline then get rid of the crap at the end
+
+foreach($headline in $story)
+# loop through each news story
+{
+    $number = $story.IndexOf($headline)
+    # Get the number of the story (Starting at zero)
+    $print = $story[$number].IndexOf("p>")
+    # Same as the $print above but on the current loop number
+    $headlines = $story[$number].substring($print+2).replace("</p>", " ")
+    # Same as $headlines above but also on current loop number
+    $speak.Speak($headlines)
+    # Speak your mind Powershell!
+    }
