@@ -1,0 +1,20 @@
+﻿Function Get-UnifiDevices{
+
+[System.Net.ServicePointManager]::ServerCertificateValidationCallback = {$true}
+$AllProtocols = [System.Net.SecurityProtocolType]'Ssl3,Tls,Tls11,Tls12'
+[System.Net.ServicePointManager]::SecurityProtocol = $AllProtocols
+
+$baseURI = "https://10.9.8.7/api"
+$loginURI = "$baseURI/login"
+
+$cred = "`{`"username`":`"`",`"password`":`"`"`}"
+
+Invoke-RestMethod -uri $loginURI -Method Post -Body $cred -ContentType "application/json" -SessionVariable session | out-null
+
+$response = Invoke-RestMethod -Uri "$baseURI/self/sites" -Method Get  -WebSession $session
+
+$returnedSites = $response.data | select name,desc 
+
+$returnedSites | select name,desc,@{n="devices";e={Invoke-RestMethod -Uri "https://$baseURI/s/$($_.name)/stat/device" -Method Post -Body "" -WebSession $session}}
+
+} 
