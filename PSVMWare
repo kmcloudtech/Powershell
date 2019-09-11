@@ -1,0 +1,42 @@
+$cred = Get-Credential
+
+if (-not("dummy" -as [type])) {
+    add-type -TypeDefinition @"
+using System;
+using System.Net;
+using System.Net.Security;
+using System.Security.Cryptography.X509Certificates;
+
+public static class Dummy {
+    public static bool ReturnTrue(object sender,
+        X509Certificate certificate,
+        X509Chain chain,
+        SslPolicyErrors sslPolicyErrors) { return true; }
+
+    public static RemoteCertificateValidationCallback GetDelegate() {
+        return new RemoteCertificateValidationCallback(Dummy.ReturnTrue);
+    }
+}
+"@
+}
+
+[System.Net.ServicePointManager]::ServerCertificateValidationCallback = [dummy]::GetDelegate()
+
+
+$headers = New-Object "System.Collections.Generic.Dictionary[[String],[String]]"
+$headers.Add('Authorization', 'Basic cmVzdF91c2VyOktlbnQwbk1jIQ==')
+$headers.Add('Accept', 'application/vnd.vmware.vmw.rest-v1+json')
+
+
+
+
+$vms = invoke-restmethod https://192.168.0.14:8697/api/vms -Credential $cred -Headers $headers -Method Get
+
+$windowsvmid = $vms | Where {$_.path -match "Windows"} | select id
+$windowsvmid = $windowsvmid.id
+
+$power = invoke-restmethod https://192.168.0.14:8697/api/vms/$windowsvmid/power -Credential $cred -Headers $headers -Method Get
+$ip = invoke-restmethod https://192.168.0.14:8697/api/vms/$windowsvmid/power -Credential $cred -Headers $headers -Method Get
+
+
+invoke-restmethod https://192.168.0.14:8697/api/vms/$windowsvmid/power -Credential $cred -Headers $headers -Method Put -body "on" -ContentType application/vnd.vmware.vmw.rest-v1+json
