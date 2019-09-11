@@ -1,0 +1,23 @@
+Set-AWSCredential -ProfileName Powershell
+
+$all = Get-EC2Instance
+$windows = $all.instances | Where-Object {$_.Platform -eq "Windows"} | Select InstanceId
+$windowsid = $windows.InstanceId
+
+Start-EC2Instance -InstanceId $windowsid | Select CurrentState,PreviousState
+
+$Ip = $all.instances | Where-Object {$_.Platform -eq "Windows"} | Select PublicIpAddress
+$ipaddress = $ip.PublicIPAddress
+
+Start-Process "$env:windir\system32\mstsc.exe" -ArgumentList "/v:$ipaddress"
+
+
+
+
+
+
+$running = Get-EC2InstanceStatus
+
+$id = $running.InstanceId
+
+Stop-EC2Instance -InstanceId $id
