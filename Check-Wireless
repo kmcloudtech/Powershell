@@ -1,0 +1,378 @@
+﻿#Function Check-Unifi {
+
+
+Write-Host Connecting To Google Spreadsheets... -BackgroundColor Blue
+Write-Host DATA WILL BE DISPLAYED IN 3 -ForegroundColor Red
+#Create Connection to GSuite/Gsheets
+#Import-GSSheet : Exception calling "Execute" with "0" argument(s): "An error occurred while sending the request."
+#Error May occur when running script multiple times but restarting ISE usually resolved issue.
+
+
+import-module configuration
+import-module psgsuite
+
+
+#$P12KeyPath = '\\Server2\Deployment\PS\Key.p12'
+#$Appemail = ".iam.gserviceaccount.com"
+$AdminEmail = "Admin@email.com"
+#$Domain = "Contoso.org"
+#$Preference = "Domain"
+#$ServiceAccountClientID = "Google?"
+
+
+#Set-PSGSuiteConfig -ConfigName MyConfig -SetAsDefaultConfig -P12KeyPath $P12KeyPath -AppEmail $AppEmail -AdminEmail $AdminEmail -CustomerID $CustomerID -Domain $Domain -Preference $Preference -ServiceAccountClientID $ServiceAccountClientID
+#$configuration = Show-PSGSuiteConfig
+$ClientSecretsPath = '\\Server2\Deployment\PS\client_secret.json'
+Set-PSGSuiteConfig -ConfigName MyConfig -SetAsDefaultConfig -ClientSecretsPath $ClientSecretsPath -AdminEmail $AdminEmail
+
+
+#Create refrences for variables
+$StaffDeviceMac = Import-GSSheet -spreadsheetid  -SheetName "Staff Devices" -RowStart 1 -Range B:C
+
+
+$Staff = New-Object -typename PSObject
+$Staff | add-member -membertype NoteProperty -name Mac -Value $StaffDeviceMac."Wifi MAC".ToUpper()
+
+
+Write-Host DATA WILL BE DISPLAYED IN 2 -ForegroundColor Yellow
+#Make MAC addresses all uppercase
+#."Wifi MAC" Refers to the column in that spreadsheet
+ 
+$ChromebookMACAddress = Import-GSSheet -spreadsheetid     -SheetName "Chromebooks" -RowStart 1 -Range B:C
+$Chromebook = $ChromebookMACAddress."Wifi MAC".ToUpper()
+
+
+$AppleDeviceMac = Import-GSSheet -spreadsheetid     -SheetName "Apple Devices" -RowStart 1 -Range B:C
+$Apple = $AppleDeviceMac."Wifi MAC".Toupper()
+
+
+Write-Host DATA WILL BE DISPLAYED IN 1 -ForegroundColor Green
+#$GsuiteChromebookMac = Import-GSSheet -spreadsheetid     -SheetName "Gsuite Chromebooks" -RowStart 1 -Range D:D
+$GsuiteChromebookMac = import-csv "\\Server2\Deployment\PS\Wifi MAC Addresses - Gsuite Chromebooks.csv"
+$Gsuite = $GsuiteChromebookMac."MAC Address".Toupper()
+#needs "MAC Addresses" instead of "Wifi MAC" for this spreadsheet
+
+
+#$WindowsDeviceMac = import-csv "\\Server2\Deployment\PS\Wifi MAC Addresses - Windows Devices.csv"
+$WindowsDeviceMac = Import-GSSheet -spreadsheetid     -SheetName "Windows Devices" -RowStart 1 -Range B:C
+$Windows = $WindowsDeviceMac."WiFi MAC".Toupper()
+
+
+$dhcpban = get-dhcpserverv4filter -ComputerName Server1.mydomain.org | select MacAddress,Description | Sort MacAddress
+$ban = $ban += $dhcpban.macaddress -replace "([0-9a-f]{2})[^0-9a-f]?(?=.)",'$1:'
+
+
+
+
+#$InvestigationMac = import-csv "\\Server2\Deployment\PS\Wifi Devices to investigate - Sheet1.csv"
+$Investigationsheet = Import-GSSheet -spreadsheetid 1GyqpYNPTt3kUru2GCO2EVBwa2Gm03lsR3-BLdElqGLk -SheetName "Sheet1" -Range A:A
+$Investigate = $Investigationsheet.Devices
+
+
+#SSL Security for Unifi API
+[System.Net.ServicePointManager]::ServerCertificateValidationCallback = {$true}
+$AllProtocols = [System.Net.SecurityProtocolType]'Ssl3,Tls,Tls11,Tls12'
+[System.Net.ServicePointManager]::SecurityProtocol = $AllProtocols
+
+
+#Variables for the Rest Method
+$baseURI = "https://Server2:8443/api"
+$loginURI = "$baseURI/login"
+
+
+#Credentials but these shouldn't be hard coded
+$cred = "`{`"username`":`"admin`",`"password`":`"SupeRSecrETP4ssword`"`}"
+
+
+#API access
+Invoke-RestMethod -uri $loginURI -Method Post -Body $cred -ContentType "application/json" -SessionVariable session | out-null
+
+
+$response = Invoke-RestMethod -Uri "$baseURI/s/default/stat/sta" -Method Get  -WebSession $session
+#$response.data holds all the information "$response.data | gm" will show all the properties that is accessable 
+
+
+#Change the MACs to uppercase
+$unifi = $response.data.mac.toupper() | sort -Unique
+
+
+#Start arrays for the invalid devices and sanctuary devices
+$Invalid = @()
+$Sancguest = @()
+$checkmac = @()
+$ban = @()
+$kid = @()
+$bandevice = @()
+#Foreach loop
+#$var is each Mac address
+#$var runs through each line from each spreasheet that is uppercased
+#Spits out which spreadsheet its on and the MAC address, Currently need to look into having the hostname also displayed
+#Also shows if devices are connected to the Sanctuary SSID on weekends
+#Shows # of devices in the investigation spreadsheet in Magenta
+#Shows devices not in any spreadsheet in red and dumps them into the $invalid Variable
+#Writes out how many computers total are connected, how many are not on the spreasheets and need attention and how many need to be looked at.
+foreach($var in $unifi)
+{
+
+
+    if($Staff.Mac.Contains($var))
+    {
+        write-host Staff Device $var
+    }
+    elseif($Chromebook.Contains($var))
+    {
+        Write-host Chromebook $var
+    }
+    
+    elseif($Apple.contains($var))
+    {
+        Write-host Apple Device $var
+    }
+
+
+    elseif($Gsuite.contains($var))
+    {
+        Write-host Gsuite Chromebook $var
+    }
+    elseif($Windows.contains($var))
+    {
+        Write-host Windows Device $var 
+    }
+    elseif($response.data.essid.contains("Sanctuary"))
+    {
+        $sancguest += $var
+        Write-host Connected to Sanctuary SSID $var
+    }
+    elseif($Investigate.contains($var))
+    {
+        $checkmac += $var
+        $name = $response.data | Where MAC -eq $var | Select Hostname,essid,ip,oui
+        Write-host Needs investigation $var $name -ForegroundColor Magenta  
+    }
+    else
+    {
+        $name = $response.data | Where MAC -eq $var | Select Hostname,essid,ip,oui
+        $invalid += $var + " " + $name
+        
+        write-host Not on Spreadsheets $var $name -foregroundcolor Red
+    }
+}
+
+
+#New PSCustom Object so that we can count the number of devices connected to the sanctuary SSID on Sundays
+$sanc = New-Object -typename PSObject
+$sanc | add-member -membertype NoteProperty -name Mac -Value $sancguest
+
+
+$check = New-Object -typename PSObject
+$check | add-member -membertype NoteProperty -name Mac -Value $checkmac
+
+
+$bad = New-Object -typename PSObject
+$bad | add-member -membertype NoteProperty -name Mac -Value $invalid
+
+
+Write-host The number of current connected devices is: $unifi.count -ForegroundColor Green
+Write-host The number of current devices that need attention is: $invalid.count -ForegroundColor Red
+Write-host The number of devices that need to be investigated: $checkmac.count -ForegroundColor Magenta
+Write-Host The number of current devices connected to the Sanctuary SSID is: $sanc.Mac.count -ForegroundColor Cyan
+
+
+
+
+foreach($kid in $bad.mac)
+ {
+    if($kid -like "*iphone*" -and $kid -like "*Classroom*")
+    {
+        $ban += $kid
+        Write-host This iPhone may need to be blocked $kid -BackgroundColor DarkRed
+    }
+        if($kid -like "*pod*" -and $kid -like "*Classroom*")
+    {
+        $ban += $kid
+        Write-host This iPod may need to be blocked $kid -BackgroundColor DarkRed
+    }
+    if($kid -like "*watch*" -and $kid -like "*Classroom*")
+    {
+        $ban += $kid
+        Write-host This Apple Watch may need to be blocked $kid -BackgroundColor DarkRed
+    }
+    if($kid -like "*nintendo*" -and $kid -like "*Classroom*")
+    {
+        $ban += $kid
+        Write-Host This Nintendo device needs to be banned $kid -BackgroundColor DarkRed
+    }
+}
+#Check and see if there are any issues with overlap
+$overlap = Compare-Object -ReferenceObject $unifi -DifferenceObject $ban -ExcludeDifferent
+
+
+#only show if there are issues
+if($overlap -ne $null){
+Write-host These MAC Addresses is on the deny filter but still connects to unifi: $overlap -BackgroundColor Blue
+}
+#Spit out a random mac address that needs to be investigated and suggest that it be banned
+#could get full name with mac address if you reference it back to the original list
+if($checkmac -ne $null){
+$roulette = Get-Random -InputObject $checkmac
+Write-host This address has been chosen to be randomly banned: $roulette -foregroundcolor Yellow
+}
+
+
+#If there are any addresses that are not in our spreadsheets this if loop adds them to a spreadsheet
+#Error when trying to export straight to Gsheets, Same error as trying to run the full script multiple times in ISE
+if($invalid -ne $null){
+$fullinvalid = @()
+    foreach($address in $invalid)
+    {
+        $number = $invalid.indexof($address)
+        $hostStart = $invalid[$number].IndexOf("e=")+2
+        $hostend = $invalid[$number].IndexOf(';')
+        $invalidmac = $Invalid[$number].substring(0,17)
+        $invalidhostname = $invalid[$number].substring($hoststart,($hostend-$hoststart))
+                if ($invalidhostname.length -eq 0)
+                {
+                $invalidhostname = "Unknown"
+                 }
+
+
+Write-host $invalidmac $invalidhostname
+$fullinvalid += $invalidmac + " " + $invalidhostname
+$invalidcsv = $fullinvalid | ConvertFrom-String -PropertyNames Mac,Hostname
+$invalidcsv | export-csv -Path '\\Server2\Deployment\PS\InvalidTest.csv' -NoTypeInformation
+    }
+    Write-host "These devices have been added to InvalidTest.csv"
+    }
+
+
+#Auto Banning devices
+If($ban -ne $null)
+    {
+    Foreach ($bandevice in $ban){
+$prompt = Read-host -Prompt "Would you like to ban these devices? $bandevice"
+$banmac = $bandevice.Substring(0,17)
+    
+    
+#Only "Yes" will run the rest of this loop
+if($prompt -eq "Y" -and $ban -ne $null)
+    {
+    foreach($device in $bandevice){
+            $susp = $banmac
+            $sus = $susp -replace ":", "-"
+
+
+            $Reason = Read-host -prompt "What is the reason for banning this device? $bandevice"
+
+
+            $deny = Get-DhcpServerv4Filter -ComputerName Server1.mydomain.org -list Deny
+            $dhcp = Get-DhcpServerv4Lease -ComputerName Server1.mydomain.org -scopeId 172.16.0.0 | sort IPAddress
+
+
+            if($sus -match $demy.macaddress) 
+                {Write-host "Device is already DHCP Banned"}
+            elseif ($sus -notmatch $deny.macaddress){
+
+
+                Write-host "Adding to Deny filter on the DHCP Server"
+                Add-DhcpServerv4Filter -MacAddress $sus -ComputerName Server1.mydomain.org -List Deny -Description $reason
+                }
+
+
+                if($sus.ToLower() -match $dhcp.clientid){
+            remove-dhcpserverv4lease -ComputerName Server1.mydomain.org -ScopeId 172.16.0.0 -ClientId $sus
+            }
+
+
+            if($sus.tolower() -notmatch $dhcp.clientid)
+            { write-host "This device does not have a lease" }
+
+
+            
+            Invoke-RestMethod -uri $loginURI -Method Post -Body $cred -ContentType "application/json" -SessionVariable session | out-null
+            $response = Invoke-RestMethod -Uri "$baseURI/s/default/rest/user" -Method GET -ContentType "application/json" -WebSession $session
+
+
+
+
+            If($response.data.mac -eq $susp)
+            {
+                Write-Host "Blocking address in Unifi"
+             
+            Invoke-RestMethod -uri $loginURI -Method Post -Body $cred -ContentType "application/json" -SessionVariable session | out-null
+            $block = Invoke-RestMethod -Uri "$baseURI/s/default/cmd/stamgr" -Method post -ContentType "application/json" -WebSession $session -body "{"cmd":"block-sta","mac":"$susp"}"
+            }
+
+
+            Invoke-RestMethod -uri $loginURI -Method Post -Body $cred -ContentType "application/json" -SessionVariable session | out-null
+            $ufiban = Invoke-RestMethod -Uri "$baseURI/s/default/rest/user" -Method GET -ContentType "application/json" -WebSession $session
+
+
+            $unifiban = $ufiban.data | Where {$_.Blocked -eq "true"} | select hostname,mac | sort mac
+            if($susp -match $unifiban.mac){
+            Write-host These devices have been banned
+                                           }
+                            }
+        }
+    }
+    }
+#prompt so that script can be reviewed in regular powershell
+Read-Host -Prompt "Press Enter to exit"
+#}
+
+
+#Scripts to check banlist but needs to be run
+#needs MAC address with : ex. 00:00:00:00:00:00
+Function Check-Banlist {
+
+
+#assign what user types in to a variable
+$ususp = Read-Host -prompt "Type in the MAC Address"
+
+
+#change variable so the DHCP server likes it
+$unsus = $unsusp -replace ":", "-"
+
+
+#change to all uppercase
+$unsusp = $ususp.ToUpper()
+
+
+#get the list of deined devices already
+$deny = Get-DhcpServerv4Filter -ComputerName Server1.mydomain.org -list Deny
+
+
+#log into unifi api
+$baseURI = "https://Server2:8443/api"
+$loginURI = "$baseURI/login"
+
+
+$cred = "`{`"username`":`"`",`"password`":`"`"`}"
+
+
+#SSL
+[System.Net.ServicePointManager]::ServerCertificateValidationCallback = {$true}
+$AllProtocols = [System.Net.SecurityProtocolType]'Ssl3,Tls,Tls11,Tls12'
+[System.Net.ServicePointManager]::SecurityProtocol = $AllProtocols
+
+
+#connect to Unifi api
+Invoke-RestMethod -uri $loginURI -Method Post -Body $cred -ContentType "application/json" -SessionVariable session | out-null
+$ufiban = Invoke-RestMethod -Uri "$baseURI/s/default/rest/user" -Method GET -ContentType "application/json" -WebSession $session
+
+
+#assign variables for blocked devices
+$unifiban = $ufiban.data | Where {$_.Blocked -eq "true"} | select hostname,mac | sort mac
+$uniban = $unifiban.mac.Toupper()
+
+
+#If loop for if they match
+If($deny.macaddress -ne $null -eq $unsus)
+    {
+       Write-host MAC is banned in DHCP
+    }
+if($uniban -contains $unsusp)
+    {
+        Write-host MAC is banned in Unifi
+    }
+#could output if device is not on lists
+}
