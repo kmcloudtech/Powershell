@@ -1,0 +1,84 @@
+$clientid = "Spotify Client ID"
+$AuthUri = "https://accounts.spotify.com/en/authorize?" +
+           "client_id=$clientid" +                                                                                     #Put the client ID from your web application here here
+           "&redirect_uri=https://localhost:8001/callback" +         #Thanks to Jonathan Lindgren (www.jonathanlindgren.com) for use of that awesome gif
+           "&scope=user-read-playback-state user-modify-playback-state user-top-read" +
+           "&response_type=token"
+
+
+           
+           
+           Add-Type -AssemblyName System.Windows.Forms
+$FormProperties = @{
+    Size = New-Object System.Drawing.Size(850, 675)
+    StartPosition = "CenterScreen"
+}
+$Form = New-Object System.Windows.Forms.Form -Property $FormProperties
+$BrowserProperties = @{
+    Dock = "Fill"
+}
+$Browser = New-Object System.Windows.Forms.WebBrowser -Property $BrowserProperties
+$Form.Controls.Add($Browser)
+$Browser.Navigate($AuthUri)
+$Form.Add_Shown({$Form.Activate()})
+$Form.ShowDialog()
+
+If ($Browser.url.Fragment -match "access_token=(.*)&token") {$AccessToken = $Matches[1]}
+$UserUri = "https://api.spotify.com/v1/me"
+$BearerToken = "Bearer $AccessToken"
+$HeaderValue = @{Authorization = $BearerToken}
+$UserAccount = (Invoke-RestMethod -uri $UserUri -Method Get -ContentType application\json -Headers $HeaderValue).href
+
+### Build Playlist and get ID ###
+
+$PlaylistUri = $UserAccount + "/playlists"
+$NewPlaylist = @{
+    name = "Before they are Popular"
+    public = "true"
+} | ConvertTo-Json
+
+$PlaylistID = Invoke-RestMethod -Uri $PlaylistUri -Method Post -ContentType application/json -Headers $HeaderValue -Body $NewplayList
+
+### Grab all genres seeds and select 5 random ones that have more than 10 bands associated with it ####
+
+$GenreSeedUri = "https://api.spotify.com/v1/recommendations/available-genre-seeds"
+$Genres = Invoke-RestMethod -Uri $GenreSeedUri -Headers $HeaderValue | Select-Object -ExpandProperty genres
+$GenreList = @()
+foreach($Genre in $Genres){
+    $GenreUri = "https://api.spotify.com/v1/search?q=genre:$Genre&type=artist&limit=5&market=us"
+    $BandCount = (Invoke-RestMethod -Uri $GenreUri -ContentType Application/json -Headers $HeaderValue).artists.total
+    if($BandCount -gt 10){
+        $GenreList += $Genre
+    }
+    Write-Output "Generating list for: $Genre"
+    Start-Sleep -Milliseconds 100
+}
+
+$FinalList = Get-Random -InputObject $GenreList -Count 5
+
+### Grab 3 least popular band per genre ###
+
+$Bands = @()
+foreach($Item in $FinalList){
+    $BandUri = "https://api.spotify.com/v1/search?q=genre:$($Item)&type=artist&type=artist&limit=5&market=us"
+    $BandCount = [System.Math]::Round(((Invoke-RestMethod -Uri $BandUri -ContentType Application/json).artists.total - 3), 0)
+    $OffsetUri = "https://api.spotify.com/v1/search?q=genre:$($Item)&type=artist&offset=$($BandCount)&limit=3&market=us"
+    $LastThreeBands = (Invoke-RestMethod -Uri $OffsetUri -ContentType Application/json).artists.items | Select-Object name, id
+    $Bands += $LastThreeBands
+}
+
+### Add top track from bands to playlist ###
+
+Foreach($Band in $Bands){
+    $TopTrackUri = "https://api.spotify.com/v1/artists/$($Band.id)/top-tracks?country=us"
+    $TopTrack = (Invoke-RestMethod -Uri $TopTrackUri -ContentType Application/json).tracks | Select-Object uri
+    if($TopTrack -ne $null){
+         $CombinedTopTrack = $TopTrack.uri -join ','
+         $AddTrackUri = $UserAccount + "/playlists/" + $PlaylistID.id + "/tracks?position=0&uris=$CombinedTopTrack"
+         Invoke-RestMethod -Uri $AddTrackUri -Method Post -ContentType application/json -Headers $HeaderValue
+    }
+}
+
+### List the 5 Genres used ###
+
+Write-Host "You have created a playlist from the following genres: $FinalList"
