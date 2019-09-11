@@ -1,0 +1,26 @@
+﻿$Investigationsheet = Import-GSSheet -spreadsheetid -SheetName "Sheet1" -Range A:A
+
+$newdevice = "A" + ($Investigationsheet.Devices.count + 2)
+$newname = "B" + ($Investigationsheet.Devices.count + 2)
+
+$invalid = import-csv "\\Server1\Deployment\PS\InvalidTest.csv"
+
+$i = 0
+foreach($device in $invalid){
+$mac = $invalid[$i].mac
+$hostname = $invalid[$i].hostname
+
+Export-gssheet -SpreadsheetId  -SheetName "Sheet1" -value $mac -range $newdevice | out-null
+Export-gssheet -SpreadsheetId  -SheetName "Sheet1" -value $hostname -range $newname |out-null
+
+++$i
+
+Write-host $mac $hostname has been added to the spreadsheet cell $newdevice $newname
+
+Write-host Refreshing Spreadsheet
+$Investigationsheet = Import-GSSheet -spreadsheetid -SheetName "Sheet1" -Range A:A
+$newdevice = "A" + ($Investigationsheet.Devices.count + 2)
+$newname = "B" + ($Investigationsheet.Devices.count + 2)
+write-host next cell will be $newdevice and $newname
+
+}
